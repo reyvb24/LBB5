@@ -1,0 +1,214 @@
+---
+title: "LBB4"
+author: "Reynard Verill"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+output: 
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cosmo
+    toc: yes
+    toc_float:
+      collapsed: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = "center", out.width = "80%")
+options(scipen = 99)
+```
+
+
+<style>
+body {
+text-align: justify}
+</style>
+
+# Objectives
+
+This report is going to analyze the correlation between the target variable "channel" with the predictor variables , and develop a suitable model for predicting the outcome of channel based on the other known data in terms of binary categorical answer, "yes" or "no", based on the resulting probability.
+
+# Library and Setup
+
+Importing the necessary libraries for the processing of the wholesale data frame.
+
+```{r cars}
+library(caret)
+library(dplyr)
+library(gmodels)
+library(ggplot2)
+library(class)
+library(tidyr)
+library(GGally)
+
+theme_set(theme_minimal() +
+            theme(legend.position = "top"))
+
+options(scipen = 999)
+
+```
+
+# Logistic Regression
+
+## Data Import
+Import the data to be analyzed for this report. In this case, the data we utilize is the wholesale data which was obtained from the kaggle website. Apart from that, we also analyze the type of data in each variable of the data frame which we store inside the wholesale variable.
+
+```{r pressure, echo=FALSE}
+wholesale <- read.csv("data_input/wholesale.csv")
+
+glimpse(wholesale)
+```
+These are the explanation of each variable which was obtained from Kaggle:
+
+Channel -> Hotel/Restaurant/Cafe
+Region -> Lisnon, Oporto or others (nominal)
+Fresh -> annual spending (m.u.) on fresh products (Continuous)
+Milk -> annual spending (m.u.) on milk products (Continuous)
+Grocery -> annual spending (m.u.)on grocery products (Continuous)
+Frozen -> annual spending (m.u.)on frozen products (Continuous)
+Detergent_Papers -> annual spending (m.u.) on detergents and paper products (Continuous)
+Delicassen -> annual spending (m.u.)on and delicatessen products (Continuous)
+
+
+## Exploratory Data Analysis
+Before making any model for the prediction of data, we need to explore further the types of data that we have in each variable and determine whether they are of the correct type, and check whether there is any null value.
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+colSums(is.na(wholesale))
+```
+After calling the function above, we are assured that the data is complete. Hence, there is no missing value.
+
+```{r}
+ggcorr(wholesale)
+```
+From the above chart upon calling the function ggcorr, we can know which variables are highly inter-correlated and not. Apart from that, we also need to dispose of the Region variable as a factor data type would make our analysis more bias due to its discrete value (more suitable for classification model such as naiveBayes and randomForest).
+```{r}
+wholesale <- wholesale %>% 
+    select(-c("Region"))
+```
+## Sampling
+
+```{r}
+#Set a random number as the seed
+set.seed(123)
+index <- sample(nrow(wholesale), nrow(wholesale)*0.8)
+
+data_train <- wholesale[index, ]
+data_test <-wholesale[-index,]
+
+
+data_train_glm <- data_train  %>% 
+  mutate_at("Channel", as.factor)
+
+data_test_glm <- data_test  %>% 
+  mutate_at("Channel", as.factor)
+
+```
+
+Check the proportion of the channel target variable that we have in our data_train, and determine whether there is a data imbalance or not.
+```{r}
+table(as.factor(data_train$Channel))
+```
+
+As can be seen that there is a significant imbalance between one value and the other, we can do an up-sampling method to balance the proportion as the total amount of data is greater than 1000.
+
+```{r}
+data_train <- data_train %>% mutate_at("Channel", as.factor)
+data_train <- upSample(x= data_train %>% select(-c("Channel")), 
+                         y= data_train$Channel, list = F,
+                         yname = "Channel")
+table(data_train$Channel)
+```
+
+
+
+```{r}
+summary(data_train)
+```
+
+```{r}
+plot(as.factor(data_train$Channel), data_train$Fresh)
+```
+After examining the outcome of the summary function above, it can be inferred that the distribution of each variable can be quite extreme, and hence, a scaling towards the data frame might be necessary to make the prediction model less bias.
+
+## Data Preprocessing
+During this process, we will separate the training data and test data into their x and y components to train and test the model respectively.
+```{r}
+train_x <- data_train %>% 
+  select(-Channel) %>% 
+  scale()
+
+train_y <- as.factor(data_train$Channel)
+
+```
+
+```{r}
+test_x <- data_test %>% 
+  select(-Channel) %>% 
+  scale(center = attr(train_x,"scaled:center"), 
+  scale = attr(train_x, "scaled:scale") 
+  )
+
+test_y <- as.factor(data_test$Channel)
+```
+
+## Model Fitting
+
+### Using generalized linear model
+In this section, we use the generalized linear model to get a sense of how the model would be like when being interpreted as a linear regression of its predictor variables.
+```{r}
+model_wholesale <- glm(Channel ~ ., data_train_glm, family = "binomial")
+model_step <- step(model_wholesale, direction="both", trace=0)
+
+summary(model_step)
+```
+
+
+From the above summary, we can infer the intercept of Channel when everything else is 0 is -2.912663096. Additionally, it can also be seen that Grocery, Detergent_Paper, and Delicassen are significant variables.
+
+```{r}
+pred_train <- predict(model_step, data_train_glm, type="response")
+pred_train <- ifelse(pred_train > 0.5, 2, 1) %>% as.factor
+
+confusionMatrix(pred_train, data_train_glm$Channel)
+```
+The above is the performance of our model against our data train.
+
+```{r}
+predict_glm <- predict(model_step, data_test_glm, type="response")
+predict_glm <- ifelse(predict_glm > 0.5, 2, 1) %>% as.factor
+predict_glm
+
+confusionMatrix(predict_glm, data_test_glm$Channel)
+```
+From the Confusion Matrix, we can obtain a recall of 0.9474 which is a quite high amount and might infer that the model could predict our data frame accurately. The accuracy shown on the confusion matrix above imply that the model is optimum. However, this model might not be suitable for this data frame, as there were warning of fitted probabilities numerically as 0 or 1 which is probably caused by extreme outliers.
+
+
+### Using K-nearest neighbor
+
+```{r}
+modelknn <- knn3(train_x, 
+                 train_y,
+                 k = sqrt(nrow(train_x)))
+predknn <- predict(modelknn, test_x, type="class")
+```
+
+```{r}
+predknn <- knn3Train(train_x,
+                     test_x,
+                     train_y,
+                     k = sqrt(nrow(train_x)) %>% round()) %>% 
+  as.factor()
+
+head(predknn)
+```
+
+```{r}
+confusionMatrix(predknn, test_y)
+```
+
+By using the K-nearest neighbor algorithm, we are able to obtain a model with lower recall compared to the GLM model, but higher specificity.
+
+## Summary
+The objective of the interpretation of this report is highly dependent upon the goal of the reader. It is advised to use the glm, step-wise regression model in order to obtain a higher recall, although there is not a major difference between both models. On the other hand, the K-nearest neighbor model manages to obtain a more accurate metric as a whole as reflected in the specificity and overall accuracy of the outcome of the confusion matrix.
